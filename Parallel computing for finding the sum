@@ -1,0 +1,77 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <mpi.h>
+
+#define totalNums 256
+
+int main(int argc, char *argv[]){
+        int rank;
+        int p;
+
+        int nums[totalNums];
+
+        int i;
+        int subListSize = totalNums;
+        int total = 0;
+        int otherTotal = 0;
+
+        int level;//for output
+
+        MPI_Init(&argc,&argv);
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &p);
+
+        //generate list
+        if (rank ==0){
+                for(i = 1 ; i <= totalNums; i++)
+                        nums[i-1]=i;
+                MPI_Comm_size(MPI_COMM_WORLD,&p);//the value of p in p0 was 256, so I put this in here to fix
+        }
+
+        //divide list
+        level = 1;
+        for(i = p; i > 1; i/=2){
+                if (rank % i == 0){//partispants
+                        if (rank%(i*2)){//recievers(hasn't sent yet)
+                                MPI_Recv(nums,subListSize*2,MPI_INT,rank-i,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+                                printf("Processor %i receives sublist from processor %i at level %i\n",rank,rank-i,level);
+                        }
+                        MPI_Send(nums+subListSize/2,subListSize,MPI_INT,rank+i/2,0,MPI_COMM_WORLD);
+                        printf("Processor %i sends sublist to processor %i at level %i\n",rank,rank+i/2,level);
+                }
+                subListSize /= 2;
+                level++;
+        }//last level doesn't send, so its a special case at the end
+        if(rank%2!=0){
+                MPI_Recv(nums,subListSize*2,MPI_INT,rank-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+                printf("Processor %i receives sublist from processor %i at level %i\n",rank,rank-1,level);
+        }
+
+        //find sequential sum
+        for (i = 0; i < subListSize; i++)
+                total += nums[i];
+
+        //combine
+        level = 1;
+        if(rank%2!=0){
+                MPI_Send(&total,1,MPI_INT,rank-1,1,MPI_COMM_WORLD);
+                printf("Processor %i sends partial sum %i to processor %i on level %i\n", rank, total, rank-1,level);
+        }
+        for (i = 2; i <= p; i*=2){
+                level++;
+                if (rank % i == 0){
+                        MPI_Recv(&otherTotal,1,MPI_INT,rank+i/2,1,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+                        total+=otherTotal;
+
+                        if (rank%(i*2)){//if they haven't sent yet
+                                MPI_Send(&total,1,MPI_INT,rank-i,1,MPI_COMM_WORLD);
+                                printf("Processor %i sends partial sum %i to processor %i on level %i\n",rank,total,rank-i,level);
+                        }
+                }
+        }
+
+        if (rank == 0) printf("total = %i\n",total);
+        MPI_Finalize();
+        return 0;
+}
+
